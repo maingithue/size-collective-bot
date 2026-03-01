@@ -7,23 +7,15 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
+    ConversationHandler,
 )
 
 TOKEN = "8577067310:AAHvTEeHmefpUa25c-5Osz_kjCQVaagsX6M"
 
 logging.basicConfig(level=logging.INFO)
 
-# --- DATABASE ---
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    telegram_id INTEGER PRIMARY KEY,
-    role TEXT,
-    name TEXT
-)
-""")
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS sizes (
@@ -35,7 +27,6 @@ CREATE TABLE IF NOT EXISTS sizes (
     height REAL
 )
 """)
-
 conn.commit()
 
 BRIGADIERS = {
@@ -53,83 +44,85 @@ BRIGADIERS = {
 WATCHER_PASSWORD = "0000"
 
 PHASES = {
-    "Фаза 5": ["23","26","78","79","80","41","42","43","44","45","46","47","48","49","50","51","52","53","105","104","106","103","102","101","100","99","98","97","112","111","110","109","108","107"],
-    "Фаза 3": ["34","35","36","37","38","39","40","41","42","43","44","45","46","47","48"],
+    "Фаза 5": ["23","26","78","79","80"],
+    "Фаза 3": ["34","35","36"],
     "Фаза 1": ["TSB","D-block","T-block"]
 }
 
-# --- START ---
+ROLE, NAME, PASSWORD, PHASE, SECTION, SIZE = range(6)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["Бригадир"], ["Кесуші"], ["Бақылаушы"]]
     await update.message.reply_text(
-        "Роль таңдаңыз / Выберите роль",
+        "Роль таңдаңыз:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
     )
+    return ROLE
 
-# --- ROLE SELECT ---
-async def role_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    role = update.message.text
-    context.user_data["role"] = role
-    
-    if role == "Бригадир":
+async def role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    context.user_data["role"] = text
+
+    if text == "Бригадир":
         await update.message.reply_text("Атыңызды енгізіңіз:")
-    elif role == "Бақылаушы":
+        return NAME
+    elif text == "Бақылаушы":
         await update.message.reply_text("Пароль енгізіңіз:")
+        return PASSWORD
     else:
-        await show_phases(update, context)
+        return await show_phases(update, context)
 
-# --- NAME CHECK ---
-async def name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text
-    if name in BRIGADIERS:
-        context.user_data["name"] = name
+async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text in BRIGADIERS:
+        context.user_data["name"] = text
         await update.message.reply_text("Пароль енгізіңіз:")
+        return PASSWORD
     else:
         await update.message.reply_text("Мұндай бригадир жоқ!")
+        return NAME
 
-# --- PASSWORD CHECK ---
-async def password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text
+async def password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
     role = context.user_data.get("role")
 
     if role == "Бригадир":
-        name = context.user_data.get("name")
-        if BRIGADIERS.get(name) == password:
-            await show_phases(update, context)
+        if BRIGADIERS.get(context.user_data.get("name")) == text:
+            return await show_phases(update, context)
         else:
             await update.message.reply_text("Қате пароль!")
-    elif role == "Бақылаушы":
-        if password == WATCHER_PASSWORD:
-            await show_stats(update, context)
-        else:
-            await update.message.reply_text("Қате пароль!")
+            return PASSWORD
 
-# --- SHOW PHASES ---
-async def show_phases(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[phase] for phase in PHASES.keys()]
+    if role == "Бақылаушы":
+        if text == WATCHER_PASSWORD:
+            return await show_stats(update, context)
+        else:
+            await update.message.reply_text("Қате пароль!")
+            return PASSWORD
+
+async def show_phases(update, context):
+    keyboard = [[p] for p in PHASES.keys()]
     await update.message.reply_text(
         "Фаза таңдаңыз:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
     )
+    return PHASE
 
-# --- PHASE SELECT ---
-async def phase_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    phase = update.message.text
-    context.user_data["phase"] = phase
-    sections = PHASES.get(phase, [])
-    keyboard = [[s] for s in sections]
+async def phase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["phase"] = update.message.text
+    keyboard = [[s] for s in PHASES[update.message.text]]
     await update.message.reply_text(
         "Участок таңдаңыз:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
     )
+    return SECTION
 
-# --- SECTION SELECT ---
-async def section_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def section(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["section"] = update.message.text
-    await update.message.reply_text("Размерлерді енгізіңіз (мысалы: 80x75, 80x53):")
+    await update.message.reply_text("Размер енгізіңіз (80x75, 80x53):")
+    return SIZE
 
-# --- SIZE INPUT ---
-async def size_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def size(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     sizes = text.replace("\n", ",").split(",")
 
@@ -143,34 +136,40 @@ async def size_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute(
                 "INSERT INTO sizes (phase, section, brigadier, width, height) VALUES (?,?,?,?,?)",
                 (
-                    context.user_data.get("phase"),
-                    context.user_data.get("section"),
-                    context.user_data.get("name"),
+                    context.user_data["phase"],
+                    context.user_data["section"],
+                    context.user_data.get("name",""),
                     float(w),
                     float(h),
                 ),
             )
     conn.commit()
-    await update.message.reply_text(f"Жалпы қосылды: {round(total,2)} м²")
+    await update.message.reply_text(f"Қосылды: {round(total,2)} м²")
+    return SIZE
 
-# --- STATS ---
-async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_stats(update, context):
     cursor.execute("SELECT phase, section, COUNT(*) FROM sizes GROUP BY phase, section")
     rows = cursor.fetchall()
     text = "Статистика:\n"
     for r in rows:
         text += f"{r[0]} - {r[1]} : {r[2]} фасад\n"
     await update.message.reply_text(text)
+    return ConversationHandler.END
 
-# --- MAIN ---
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, role_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, name_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, password_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, phase_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, section_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, size_handler))
+conv = ConversationHandler(
+    entry_points=[CommandHandler("start", start)],
+    states={
+        ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, role)],
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
+        PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, password)],
+        PHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, phase)],
+        SECTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, section)],
+        SIZE: [MessageHandler(filters.TEXT & ~filters.COMMAND, size)],
+    },
+    fallbacks=[],
+)
 
+app.add_handler(conv)
 app.run_polling()
