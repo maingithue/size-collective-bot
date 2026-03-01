@@ -1,6 +1,8 @@
 services:
   - type: web
     name: size-collective-bot
-    runtime: python
+    env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python bot.py"
+    plan: free
+    pythonVersion: 3.11.9
